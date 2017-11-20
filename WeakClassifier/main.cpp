@@ -246,7 +246,7 @@ int load_images(const char *f_path, vector<char*> &out_path, vector<int> &out_ma
 
 bool save_weak_classifiers(vector<WeakClassifier> &c_vec)
 {
-    FILE *f = fopen("C:\\alexmihy\\botalka\\diploma\\code\\weak.txt", "w");
+    FILE *f = fopen("C:\\alexmihy\\botalka\\diploma\\code\\weak_BIG.txt", "w");
     if (f == 0) {
         cout << "Can't open weak.txt" << endl;
         return 0;
@@ -260,7 +260,7 @@ bool save_weak_classifiers(vector<WeakClassifier> &c_vec)
 
 bool load_weak_classifiers(vector<WeakClassifier> &c_vec)
 {
-    FILE *f = fopen("C:\\alexmihy\\botalka\\diploma\\code\\weak.txt", "r");
+    FILE *f = fopen("C:\\alexmihy\\botalka\\diploma\\code\\weak_BIG.txt", "r");
     if (f == 0) {
         cout << "Can't open weak.txt" << endl;
         return 0;
@@ -276,7 +276,7 @@ bool load_weak_classifiers(vector<WeakClassifier> &c_vec)
 
 bool save_alphas(vector<pair<int, double>> &alphas)
 {
-    FILE *f = fopen("C:\\alexmihy\\botalka\\diploma\\code\\alpha_100.txt", "w");
+    FILE *f = fopen("C:\\alexmihy\\botalka\\diploma\\code\\alpha_BIG_100.txt", "w");
     if (f == 0) {
         cout << "Can't open alpha_100.txt" << endl;
         return 0;
@@ -290,7 +290,7 @@ bool save_alphas(vector<pair<int, double>> &alphas)
 
 bool load_alphas(vector<pair<int, double>> &alphas)
 {
-    FILE *f = fopen("C:\\alexmihy\\botalka\\diploma\\code\\alpha_100.txt", "r");
+    FILE *f = fopen("C:\\alexmihy\\botalka\\diploma\\code\\alpha_BIG_100.txt", "r");
     if (f == 0) {
         cout << "Can't open alpha_100.txt" << endl;
         return 0;
@@ -435,6 +435,8 @@ vector<pair<int, double>> train(vector<char*> &s_path, vector<int> &s_mark, int 
             }
         }
 
+
+
         double alpha = log((1 - min_error) / min_error) / 2;
         alphas.push_back(make_pair(min_idx, alpha));
 
@@ -447,6 +449,9 @@ vector<pair<int, double>> train(vector<char*> &s_path, vector<int> &s_mark, int 
                 weights[i] *= 0.5 / (1 - min_error);
 
         }
+
+        if (K % 1000 == 0)
+            cout << "K = " << K << endl;
     }
 
     return alphas;
@@ -472,6 +477,12 @@ double predict(vector<pair<int, double>> &alphas, vector<WeakClassifier> &c_vec,
     int f_count = WAVELETS_1X2_COUNT + WAVELETS_2X1_COUNT +
         WAVELETS_1X3_COUNT + WAVELETS_3X1_COUNT + WAVELETS_2X2_COUNT;
 
+    FILE *f = fopen("C:\\alexmihy\\botalka\\diploma\\databases\\DATASET\\result.txt", "w");
+    if (f == 0) {
+        cout << "Unable to open result.txt" << endl;
+        return 1;
+    }
+
     for (int i = 0; i < s_count; i++) {
         vector<int> feature[5], whole_feature;
 
@@ -496,9 +507,40 @@ double predict(vector<pair<int, double>> &alphas, vector<WeakClassifier> &c_vec,
 
         if (result == s_mark[i])
             correct++;
+
+        fprintf(f, "%s %d\n", s_path[i], result);
     }
 
+    fclose(f);
+
     return 1.0 * correct / s_count;
+}
+
+int is_face(vector<pair<int, double>> &alphas, vector<WeakClassifier> &c_vec, Mat &img)
+{
+    int f_count = WAVELETS_1X2_COUNT + WAVELETS_2X1_COUNT +
+        WAVELETS_1X3_COUNT + WAVELETS_3X1_COUNT + WAVELETS_2X2_COUNT;
+    vector<int> feature[5], whole_feature;
+
+    Mat resized_img;
+    resize(img, resized_img, Size(SIZE, SIZE));
+
+    vector<int> integral_img = get_integral_image(img);
+
+    feature[0] = get_2x1_wavelets(integral_img);
+    feature[1] = get_1x2_wavelets(integral_img);
+    feature[2] = get_3x1_wavelets(integral_img);
+    feature[3] = get_1x3_wavelets(integral_img);
+    feature[4] = get_2x2_wavelets(integral_img);
+
+    whole_feature.resize(f_count);
+    int p = 0;
+    for (int j = 0; j < 5; j++) {
+        for (size_t k = 0; k < feature[j].size(); k++)
+            whole_feature[p++] = feature[j][k];
+    }
+
+    return get_prediction(alphas, c_vec, whole_feature);
 }
 
 #if 0
@@ -626,8 +668,11 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    char pos_path[] = "C:\\alexmihy\\botalka\\diploma\\databases\\good_samples\\path.txt";
-    char neg_path[] = "C:\\alexmihy\\botalka\\diploma\\databases\\background_samples\\result\\path.txt";
+    //char pos_path[] = "C:\\alexmihy\\botalka\\diploma\\databases\\DATASET\\GOOD\\path.txt";
+    //char neg_path[] = "C:\\alexmihy\\botalka\\diploma\\databases\\DATASET\\BAD\\path.txt";
+
+    char pos_path[] = "C:\\alexmihy\\botalka\\diploma\\databases\\DATASET\\GOOD\\path_test.txt";
+    char neg_path[] = "C:\\alexmihy\\botalka\\diploma\\databases\\DATASET\\BAD\\path_test.txt";
 
     vector<char*> sample_path;
     vector<int> sample_mark;
@@ -659,10 +704,57 @@ int main(int argc, char **argv)
         double precision = predict(alphas, c_vec, sample_path, sample_mark);
         cout << "PRECISION = " << precision << endl;
 
+        /*
+        const char path[] = "C:\\alexmihy\\botalka\\diploma\\code\\image.pgm";
+            
+        Mat in_img = imread(path, CV_LOAD_IMAGE_GRAYSCALE);
+
+        Ptr<CLAHE> clahe_filter = createCLAHE();
+        clahe_filter->setClipLimit(2);
+
+        Mat clahed_img;
+        clahe_filter->apply(in_img, clahed_img);
+
+        int width = 168;
+        int height = 192;
+
+        for (int i = 0; i < in_img.rows - height; i++) {
+            for (int j = 0; j < in_img.cols - width; j++) {
+                Rect myROI(j, i, width, height);
+
+                Mat cropped = clahed_img(myROI);
+
+                if (is_face(alphas, c_vec, cropped) > 0) {
+                    for (int k = 0; k < height; k++) {
+                        clahed_img.at<uchar>(i + k, j) = 255;
+                        clahed_img.at<uchar>(i + k, j + width) = 255;
+
+                    }
+                    for (int t = 0; t < width; t++) {
+                        clahed_img.at<uchar>(i, j + t) = 255;
+                        clahed_img.at<uchar>(i + height, j + t) = 255;
+                    }
+
+                    
+
+                    //return 0;
+
+                }
+
+            }
+        }
+
+        imshow("HOHOHO", clahed_img);
+        waitKey(0);
+        */
+
     } else {
         cout << "Bad arguments" << endl;
         return 1;
     }
+
+    for (size_t i = 0; i < sample_path.size(); i++)
+        delete[] sample_path[i];
 
     return 0;
 }
