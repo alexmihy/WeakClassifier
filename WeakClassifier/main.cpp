@@ -211,7 +211,7 @@ vector<int> get_integral_image(const Mat &img)
 }
 
 
-bool load_images(const char *f_path, vector<char*> &out_path, vector<int> &out_mark, int mark)
+int load_images(const char *f_path, vector<char*> &out_path, vector<int> &out_mark, int mark)
 {
     FILE *f;
     
@@ -242,6 +242,263 @@ bool load_images(const char *f_path, vector<char*> &out_path, vector<int> &out_m
 
     fclose(f);
     return count;
+}
+
+bool save_weak_classifiers(vector<WeakClassifier> &c_vec)
+{
+    FILE *f = fopen("C:\\alexmihy\\botalka\\diploma\\code\\weak.txt", "w");
+    if (f == 0) {
+        cout << "Can't open weak.txt" << endl;
+        return 0;
+    }
+
+    for (size_t i = 0; i < c_vec.size(); i++)
+        fprintf(f, "%d %d\n", c_vec[i].threshold, c_vec[i].sign);
+    fclose(f);
+    return 1;
+}
+
+bool load_weak_classifiers(vector<WeakClassifier> &c_vec)
+{
+    FILE *f = fopen("C:\\alexmihy\\botalka\\diploma\\code\\weak.txt", "r");
+    if (f == 0) {
+        cout << "Can't open weak.txt" << endl;
+        return 0;
+    }
+
+    int threshold, sign;
+    while (fscanf(f, "%d %d\n", &threshold, &sign) > 0) {
+        c_vec.push_back(WeakClassifier(sign, threshold));
+    }
+    fclose(f);
+    return 1;
+}
+
+bool save_alphas(vector<pair<int, double>> &alphas)
+{
+    FILE *f = fopen("C:\\alexmihy\\botalka\\diploma\\code\\alpha_100.txt", "w");
+    if (f == 0) {
+        cout << "Can't open alpha_100.txt" << endl;
+        return 0;
+    }
+
+    for (size_t i = 0; i < alphas.size(); i++)
+        fprintf(f, "%d %lf\n", alphas[i].first, alphas[i].second);
+    fclose(f);
+    return 1;
+}
+
+bool load_alphas(vector<pair<int, double>> &alphas)
+{
+    FILE *f = fopen("C:\\alexmihy\\botalka\\diploma\\code\\alpha_100.txt", "r");
+    if (f == 0) {
+        cout << "Can't open alpha_100.txt" << endl;
+        return 0;
+    }
+
+    int idx;
+    double value;
+    while (fscanf(f, "%d %lf\n", &idx, &value) > 0) {
+        alphas.push_back(make_pair(idx, value));
+    }
+    fclose(f);
+    return 1;
+}
+
+int get_classifier_h(WeakClassifier c, int value)
+{
+    int result;
+
+    if (c.sign > 0)
+        result = c.threshold >= value ? 1 : -1;
+    else
+        result = c.threshold < value ? 1 : -1;
+
+    return result;
+}
+
+vector<pair<int, double>> train(vector<char*> &s_path, vector<int> &s_mark, int pos_count, int neg_count, int MAX_K)
+{
+    int s_count = s_path.size();
+    int f_count = WAVELETS_1X2_COUNT + WAVELETS_2X1_COUNT +
+        WAVELETS_1X3_COUNT + WAVELETS_3X1_COUNT + WAVELETS_2X2_COUNT;
+
+    // 2x1 1x2 3x1 1x3 2x2 for each sample
+    vector<vector<int>> sample_features;
+    sample_features.resize(s_count);
+
+    for (int i = 0; i < s_count; i++) {
+        vector<int> feature[5], whole_feature;
+
+        // LOAD IMAGE -> CLAHED -> RESIZED -> INTEGRAL
+        Mat img = get_image(s_path[i]);
+        vector<int> integral_img = get_integral_image(img);
+
+        feature[0] = get_2x1_wavelets(integral_img);
+        feature[1] = get_1x2_wavelets(integral_img);
+        feature[2] = get_3x1_wavelets(integral_img);
+        feature[3] = get_1x3_wavelets(integral_img);
+        feature[4] = get_2x2_wavelets(integral_img);
+
+        whole_feature.resize(f_count);
+        int p = 0;
+        for (int j = 0; j < 5; j++) {
+            for (size_t k = 0; k < feature[j].size(); k++)
+                whole_feature[p++] = feature[j][k];
+        }
+        sample_features[i] = whole_feature;
+    }
+    cout << "WAVELETS CALCULATED" << endl;
+
+    // GET WEAK CLASSIFIERS
+    vector<WeakClassifier> classifiers;
+    classifiers.resize(f_count);
+    for (int i = 0; i < f_count; i++) {
+        vector<pair<int, int>> hist(s_count);
+        for (int j = 0; j < s_count; j++) {
+            hist[j] = make_pair(sample_features[j][i], s_mark[j]);
+        }
+        sort(hist.begin(), hist.end());
+
+        int plus_sum = 0, minus_sum = 0;
+        double max = -1, min = -1;
+        int max_idx, min_idx;
+
+        for (int j = 0; j < s_count; j++) {
+            if (hist[j].second == 1)
+                plus_sum++;
+            else
+                minus_sum++;
+
+            if (j - 1 >= 0 && hist[j].first == hist[j - 1].first)
+                continue;
+
+            double val = 1.0 * (plus_sum + (neg_count - minus_sum)) / s_count;
+
+            if (max < 0 || max < val) {
+                max = val;
+                max_idx = j;
+            }
+            if (min < 0 || min > val) {
+                min = val;
+                min_idx = j;
+            }
+        }
+
+        if (1 - min > max) {
+            //направо строго
+            classifiers[i].sign = -1;
+            classifiers[i].threshold = hist[min_idx].first;
+
+            if (fabs(min) < 1e-4) {
+                classifiers[i].threshold = rand() % 255;
+                cout << "100%" << endl;
+            }
+        }
+        else {
+            //налево нестрого
+            classifiers[i].sign = 1;
+            classifiers[i].threshold = hist[max_idx].first;
+
+            if (fabs(max - 1) < 1e-4) {
+                classifiers[i].threshold = rand() % 255;
+                cout << "100%" << endl;
+            }
+        }
+    }
+    save_weak_classifiers(classifiers);
+    cout << "WEAK DONE" << endl;
+
+
+    // CALCULATE ALPHAS
+    // P >= V по дефолту
+    vector<double> weights(s_count);
+    for (int i = 0; i < s_count; i++)
+        weights[i] = 1.0 / s_count;
+
+    vector<pair<int, double>> alphas;
+    for (int K = 0; K < MAX_K; K++) {
+        int min_idx;
+        double min_error = -1;
+        for (int i = 0; i < f_count; i++) {
+            double error = 0;
+            for (int j = 0; j < s_count; j++) {
+                int res = get_classifier_h(classifiers[i], sample_features[j][i]);
+
+                if (s_mark[j] != res)
+                    error += weights[j];
+            }
+
+            if (min_error < 0 || min_error > error) {
+                min_error = error;
+                min_idx = i;
+            }
+        }
+
+        double alpha = log((1 - min_error) / min_error) / 2;
+        alphas.push_back(make_pair(min_idx, alpha));
+
+        for (int i = 0; i < s_count; i++) {
+            int res = get_classifier_h(classifiers[min_idx], sample_features[i][min_idx]);
+
+            if (s_mark[i] != res)
+                weights[i] *= 0.5 / min_error;
+            else
+                weights[i] *= 0.5 / (1 - min_error);
+
+        }
+    }
+
+    return alphas;
+}
+
+int get_prediction(vector<pair<int, double>> &alphas, vector<WeakClassifier> &c_vec, vector<int> &feature)
+{
+    double total_value = 0;
+    for (size_t k = 0; k < alphas.size(); k++) {
+        int c_idx = alphas[k].first;
+        int result = get_classifier_h(c_vec[c_idx], feature[c_idx]);
+
+        total_value += alphas[k].second * result;
+    }
+
+    return total_value > 0 ? +1 : -1;
+}
+
+double predict(vector<pair<int, double>> &alphas, vector<WeakClassifier> &c_vec, vector<char*> &s_path, vector<int> &s_mark)
+{
+    int correct = 0;
+    int s_count = s_path.size();
+    int f_count = WAVELETS_1X2_COUNT + WAVELETS_2X1_COUNT +
+        WAVELETS_1X3_COUNT + WAVELETS_3X1_COUNT + WAVELETS_2X2_COUNT;
+
+    for (int i = 0; i < s_count; i++) {
+        vector<int> feature[5], whole_feature;
+
+        // LOAD IMAGE -> CLAHED -> RESIZED -> INTEGRAL
+        Mat img = get_image(s_path[i]);
+        vector<int> integral_img = get_integral_image(img);
+
+        feature[0] = get_2x1_wavelets(integral_img);
+        feature[1] = get_1x2_wavelets(integral_img);
+        feature[2] = get_3x1_wavelets(integral_img);
+        feature[3] = get_1x3_wavelets(integral_img);
+        feature[4] = get_2x2_wavelets(integral_img);
+
+        whole_feature.resize(f_count);
+        int p = 0;
+        for (int j = 0; j < 5; j++) {
+            for (size_t k = 0; k < feature[j].size(); k++)
+                whole_feature[p++] = feature[j][k];
+        }
+
+        int result = get_prediction(alphas, c_vec, whole_feature);
+
+        if (result == s_mark[i])
+            correct++;
+    }
+
+    return 1.0 * correct / s_count;
 }
 
 #if 0
@@ -364,6 +621,11 @@ void generate()
 
 int main(int argc, char **argv)
 {
+    if (argc < 2) {
+        cout << "Bad arguments" << endl;
+        return 1;
+    }
+
     char pos_path[] = "C:\\alexmihy\\botalka\\diploma\\databases\\good_samples\\path.txt";
     char neg_path[] = "C:\\alexmihy\\botalka\\diploma\\databases\\background_samples\\result\\path.txt";
 
@@ -372,218 +634,35 @@ int main(int argc, char **argv)
 
     int pos_count, neg_count;
 
+    // FILL SAMPLE_PATH AND SAMPLE_MARK
     if (((pos_count = load_images(pos_path, sample_path, sample_mark, +1)) < 0) ||
         ((neg_count = load_images(neg_path, sample_path, sample_mark, -1)) < 0)) {
         cout << "Unable to load image pathes" << endl;
         return 1;
     }
-
     cout << "PATHES LOADED" << endl;
 
-    // FILL SAMPLE_PATH AND SAMPLE_MARK
-    //sample_path.push_back(in_path);
-    //sample_mark.push_back(+1);
 
-    int s_count = sample_path.size();
-    int f_count = WAVELETS_1X2_COUNT + WAVELETS_2X1_COUNT + 
-        WAVELETS_1X3_COUNT + WAVELETS_3X1_COUNT + WAVELETS_2X2_COUNT;
-    
-    // 2x1 1x2 3x1 1x3 2x2 for each sample
-    vector<vector<int>> sample_features;
-    sample_features.resize(s_count);
+    if (!strcmp(argv[1], "--train")) {
+        vector<pair<int, double>> alphas = train(sample_path, sample_mark, pos_count, neg_count, 100);
 
-    for (int i = 0; i < s_count; i++) {
-        vector<int> feature[5], whole_feature;
+        save_alphas(alphas);
 
-        // LOAD IMAGE -> CLAHED -> RESIZED -> INTEGRAL
-        Mat img = get_image(sample_path[i]);
-        vector<int> integral_img = get_integral_image(img);
+        cout << "TRAIN DONE!" << endl;
+    } else if (!strcmp(argv[1], "--predict")) {
+        vector<pair<int, double>> alphas;
+        vector<WeakClassifier> c_vec;
 
-        feature[0] = get_2x1_wavelets(integral_img);
-        feature[1] = get_1x2_wavelets(integral_img);
-        feature[2] = get_3x1_wavelets(integral_img);
-        feature[3] = get_1x3_wavelets(integral_img);
-        feature[4] = get_2x2_wavelets(integral_img);
+        load_alphas(alphas);
+        load_weak_classifiers(c_vec);
 
-        whole_feature.resize(f_count);
-        int p = 0;
-        for (int j = 0; j < 5; j++) {
-            for (size_t k = 0; k < feature[j].size(); k++)
-                whole_feature[p++] = feature[j][k];
-        }
-        sample_features[i] = whole_feature;
-    }
+        double precision = predict(alphas, c_vec, sample_path, sample_mark);
+        cout << "PRECISION = " << precision << endl;
 
-    cout << "WAVELETS CALCULATED" << endl;
-
-    vector<WeakClassifier> classifiers;
-    classifiers.resize(f_count);
-    
-    for (int i = 0; i < f_count; i++) {
-        vector<pair<int, int>> hist(s_count);
-        for (int j = 0; j < s_count; j++) {
-            hist[j] = make_pair(sample_features[j][i], sample_mark[j]);
-        }
-
-        sort(hist.begin(), hist.end());
-        int plus_sum = 0, minus_sum = 0;
-        double max = -1, min = -1;
-        int max_idx, min_idx;
-
-
-        for (int j = 0; j < s_count; j++) {
-            if (hist[j].second == 1)
-                plus_sum++;
-            else
-                minus_sum++;
-
-            if (j - 1 >= 0 && hist[j].first == hist[j - 1].first)
-                continue;
-
-            double val = 1.0 * (plus_sum + (minus_count - minus_sum)) / s_count;
-
-            if (max < 0 || max < val) {
-                max = val;
-                max_idx = j;
-            }
-            if (min < 0 || min > val) {
-                min = val;
-                min_idx = j;
-            }
-        }
-
-        if (1 - min > max) {
-            //направо строго
-            classifiers[i].sign = -1;
-            classifiers[i].threshold = hist[min_idx].first;
-
-            if (fabs(min) < 1e-4) {
-                classifiers[i].threshold = rand() % 255;
-                cout << "100%" << endl;
-            }
-        } else {
-            //налево нестрого
-            classifiers[i].sign = 1;
-            classifiers[i].threshold = hist[max_idx].first;
-
-            if (fabs(max - 1) < 1e-4) {
-                classifiers[i].threshold = rand() % 255;
-                cout << "100%" << endl;
-            }
-        }
-    }
-
-    cout << "WEAK DONE" << endl;
-
-    f = fopen("C:\\alexmihy\\botalka\\diploma\\code\\alpha.txt", "w");
-
-    if (f == 0) {
-        cout << "Can't open out" << endl;
+    } else {
+        cout << "Bad arguments" << endl;
         return 1;
     }
-
-    // P >= V по дефолту
-    vector<double> weights(s_count);
-    for (int i = 0; i < s_count; i++)
-        weights[i] = 1.0 / s_count;
-
-    vector<pair<int, double>> alphas;
-    for (int K = 0; K < 1000; K++) {
-        int min_idx;
-        double min_error = -1;
-        for (int i = 0; i < f_count; i++) {
-            double error = 0;
-            for (int j = 0; j < s_count; j++) {
-                int res;
-                if (classifiers[i].sign > 0)
-                    res = classifiers[i].threshold >= sample_features[j][i] ? 1 : -1;
-                else 
-                    res = classifiers[i].threshold < sample_features[j][i] ? 1 : -1;
-
-                if (sample_mark[j] != res)
-                    error += weights[j];
-            }
-
-            if (min_error < 0 || min_error > error) {
-                min_error = error;
-                min_idx = i;
-            }
-        }
-
-
-        double alpha = log((1 - min_error) / min_error) / 2;
-        alphas.push_back(make_pair(min_idx, alpha));
-
-        for (int i = 0; i < s_count; i++) {
-            int res;
-            if (classifiers[min_idx].sign > 0)
-                res = classifiers[min_idx].threshold >= sample_features[i][min_idx] ? 1 : -1;
-            else
-                res = classifiers[min_idx].threshold < sample_features[i][min_idx] ? 1 : -1;
-
-            if (sample_mark[i] != res)
-                weights[i] *= 0.5 / min_error;
-            else
-                weights[i] *= 0.5 / (1 - min_error);
-            
-        }
-    }
-
-    /*
-    cout << "ALPHAS:" << endl;
-    for (size_t i = 0; i < alphas.size(); i++) {
-        cout << alphas[i].first << " - " << alphas[i].second << endl;
-    }
-    */
-    for (size_t i = 0; i < alphas.size(); i++)
-        fprintf(f, "%d %lf\n", alphas[i].first, alphas[i].second);
-
-
-
-    vector<char*> test_path;
-    vector<int> test_mark;
-
-
-    s_count = test_path.size();
-    int correct = 0;
-    for (int i = 0; i < s_count; i++) {
-        vector<int> feature[5], whole_feature;
-
-        // LOAD IMAGE -> CLAHED -> RESIZED -> INTEGRAL
-        Mat img = get_image(test_path[i]);
-        vector<int> integral_img = get_integral_image(img);
-
-        feature[0] = get_2x1_wavelets(integral_img);
-        feature[1] = get_1x2_wavelets(integral_img);
-        feature[2] = get_3x1_wavelets(integral_img);
-        feature[3] = get_1x3_wavelets(integral_img);
-        feature[4] = get_2x2_wavelets(integral_img);
-
-        whole_feature.resize(f_count);
-        int p = 0;
-        for (int j = 0; j < 5; j++) {
-            for (size_t k = 0; k < feature[j].size(); k++)
-                whole_feature[p++] = feature[j][k];
-        }
-
-        double result = 0;
-        for (size_t k = 0; k < alphas.size(); k++) {
-            int res;
-            int idx = alphas[k].first;
-
-            if (classifiers[idx].sign > 0)
-                res = classifiers[idx].threshold >= whole_feature[idx] ? 1 : -1;
-            else
-                res = classifiers[idx].threshold < whole_feature[idx] ? 1 : -1;
-
-            result += alphas[k].second * res;
-        }
-
-        if (result * test_mark[i] > 0)
-            correct++;
-    }
-
-    cout << 1.0 * correct / s_count << endl;
 
     return 0;
 }
